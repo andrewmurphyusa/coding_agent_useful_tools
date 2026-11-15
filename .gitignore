@@ -1,0 +1,11 @@
+﻿# Local agentlog outputs and indexes
+agentlog-out/
+*.sqlite
+.venv/
+__pycache__/
+
+# Session logs are private. Synthetic fixtures under any tests/fixtures are allowed.
+rollout-*.jsonl
+rollout-*.jsonl.*
+*.jsonl
+!**/tests/fixtures/**
