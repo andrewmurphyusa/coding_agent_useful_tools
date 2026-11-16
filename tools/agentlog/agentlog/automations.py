@@ -12,13 +12,10 @@
 """Read local automation metadata and manage explicit snapshots."""
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import calendar
 import hashlib
-from io import BytesIO
 import os
 import re
 import shutil
-import struct
 import tomllib
 import warnings
 
@@ -51,91 +48,26 @@ def _shingles(text):
     return {hashlib.sha256(' '.join(words[i:i+5]).encode('utf-8')).hexdigest() for i in range(len(words)-4)}
 
 
-def _windows_eastern_zone(first_year, last_year):
-    """Build an in-memory zone from Windows' installed per-year Eastern rules."""
-    import winreg
-    from zoneinfo import ZoneInfo
-
-    path = r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Time Zones\Eastern Standard Time\Dynamic DST'
-    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
-        first = winreg.QueryValueEx(key, 'FirstEntry')[0]
-        last = winreg.QueryValueEx(key, 'LastEntry')[0]
-        if not isinstance(first, int) or not isinstance(last, int) or not 1 <= first <= last <= 9999:
-            raise ValueError('Invalid Windows timezone rule bounds')
-        rules = [(year, winreg.QueryValueEx(key, str(min(max(year, first), last)))[0])
-                 for year in range(first_year, last_year + 1)]
-
-    def transition(year, fields):
-        absolute_year, month, weekday, day, hour, minute, second, millis = fields
-        if absolute_year not in (0, year) or millis or not 0 <= weekday <= 6:
-            raise ValueError('Unsupported Windows timezone transition')
-        if not absolute_year:
-            if not 1 <= day <= 5: raise ValueError('Invalid transition week')
-            first_weekday, month_days = calendar.monthrange(year, month)
-            day = 1 + ((weekday + 6) % 7 - first_weekday) % 7 + 7 * (day - 1)
-            if day > month_days: day -= 7
-        return datetime(year, month, day, hour, minute, second)
-
-    offsets = []
-    changes = []
-    epoch = datetime(1970, 1, 1)
-    for year, raw in rules:
-        bias, standard_bias, daylight_bias, *dates = struct.unpack('<lll16H', raw)
-        standard = -(bias + standard_bias) * 60
-        daylight = -(bias + daylight_bias) * 60
-        if not (-86400 < standard < 86400 and -86400 < daylight < 86400):
-            raise ValueError('Invalid Windows timezone offset')
-        for offset, is_dst in ((standard, 0), (daylight, 1)):
-            if (offset, is_dst) not in offsets: offsets.append((offset, is_dst))
-        if dates[1] == dates[9] == 0:
-            # A year without DST still needs its standard offset represented.
-            changes.append((int((datetime(year, 1, 1) - epoch).total_seconds()) - standard,
-                            offsets.index((standard, 0))))
-            continue
-        daylight_start = transition(year, dates[8:])
-        standard_start = transition(year, dates[:8])
-        if daylight_start >= standard_start:
-            raise ValueError('Unsupported Eastern timezone transition order')
-        changes.extend([(int((daylight_start - epoch).total_seconds()) - standard,
-                         offsets.index((daylight, 1))),
-                        (int((standard_start - epoch).total_seconds()) - daylight,
-                         offsets.index((standard, 0)))])
-    if len(offsets) > 256: raise ValueError('Too many Windows timezone offsets')
-    changes.sort()
-    abbreviations = b'EST\x00EDT\x00'
-    # TZif v2 uses a small unused v1 block followed by the 64-bit transitions.
-    header = b'TZif2' + b'\x00' * 15
-    unused = header + struct.pack('>6l', 0, 0, 0, 0, 1, 4) + struct.pack('>lbb', offsets[0][0], 0, 0) + b'EST\x00'
-    data = header + struct.pack('>6l', 0, 0, 0, len(changes), len(offsets), len(abbreviations))
-    data += b''.join(struct.pack('>q', instant) for instant, _ in changes)
-    data += bytes(index for _, index in changes)
-    data += b''.join(struct.pack('>lbb', offset, dst, dst * 4) for offset, dst in offsets)
-    zone = ZoneInfo.from_file(BytesIO(unused + data + abbreviations + b'\n\n'), key='Fallback/US-Eastern')
-    description = f'Windows Eastern Standard Time per-year rules (installed years {first}-{last}'
-    if first_year < first or last_year > last: description += '; edge-year rules extrapolated'
-    return zone, description + ')'
+def _tz_data_hint():
+    """Explain how to obtain IANA data when none is reachable by zoneinfo."""
+    import importlib.util
+    import zoneinfo
+    if importlib.util.find_spec('tzdata') is None and not any(Path(p).is_dir() for p in zoneinfo.TZPATH):
+        return (' No IANA timezone data was found: install agentlog with pip or pipx (which installs the'
+                ' tzdata package on Windows), or run "python -m pip install tzdata".')
+    return ''
 
 
-def _schedule_zone(requested, anchor_year, started_year):
+def _schedule_zone(requested):
+    """Load a named zone from IANA data; unavailable zones make schedule fit unknown."""
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
     try:
         return ZoneInfo(requested)
-    except ZoneInfoNotFoundError:
+    except (ZoneInfoNotFoundError, ValueError):
         label = ascii(redact(requested)[0][:120])
-        try:
-            try:
-                zone, source = ZoneInfo('America/New_York'), 'America/New_York'
-            except ZoneInfoNotFoundError:
-                zone, source = _windows_eastern_zone(max(1, min(anchor_year, started_year) - 1),
-                                                       min(9999, max(anchor_year, started_year) + 1))
-        except (ImportError, OSError, ValueError, KeyError, TypeError, struct.error):
-            warnings.warn(f'Timezone {label} unavailable; US Eastern fallback rules also unavailable; schedule fit is unknown.',
-                          UserWarning, stacklevel=2)
-            raise ZoneInfoNotFoundError(requested) from None
-        warnings.warn(f'Timezone {label} unavailable; assuming US Eastern Time with DST using {source}. '
-                      'This may change matching; it does not confirm fit in the requested timezone.',
+        warnings.warn(f'Timezone {label} unavailable; schedule fit is unknown.' + _tz_data_hint(),
                       UserWarning, stacklevel=2)
-        return zone
+        raise ZoneInfoNotFoundError(requested) from None
 
 
 def _schedule_fit(rule, started):
@@ -157,7 +89,7 @@ def _schedule_fit(rule, started):
                 prefix, stamp = line.split(':', 1)
                 tzmatch = re.search(r'TZID=([^;:]+)', prefix)
                 wall_anchor = datetime.strptime(stamp.removesuffix('Z'), '%Y%m%dT%H%M%S')
-                zone = _schedule_zone(tzmatch.group(1), wall_anchor.year, dt.year) if tzmatch and not stamp.endswith('Z') else timezone.utc
+                zone = _schedule_zone(tzmatch.group(1)) if tzmatch and not stamp.endswith('Z') else timezone.utc
                 anchor = wall_anchor.replace(tzinfo=zone)
                 break
         if anchor: dt = dt.astimezone(anchor.tzinfo)

@@ -1,18 +1,31 @@
-# Deferred task: automatic offline IANA timezone data
+# Timezone data: decision record (resolved 2026-11-15)
 
-## Context and gate
+## Resolution
+
+The user chose option 1: agentlog declares `tzdata; sys_platform == "win32"` in `pyproject.toml`. `tzdata` is the IANA database packaged as TZif files by Python core developers (Apache-2.0; the IANA data itself is public domain) and is the source Python's own `zoneinfo` documentation recommends for Windows. `pip`/`pipx` install it automatically on Windows; Linux and macOS use the system IANA database. Runtime stays offline and uses only the standard-library `zoneinfo`.
+
+The temporary US Eastern fallback (including the Windows registry reconstruction) was removed. A zone that cannot be loaded now makes schedule fit unknown, with a redacted stderr warning; when no timezone data exists at all, the warning tells the user to install `tzdata`. Rule updates arrive through new `tzdata` releases (`pip install -U tzdata`) or OS updates. CI installs the package before testing, so Windows jobs exercise real IANA data.
+
+This deliberately departs from the original "standard-library-only, no runtime packages" rule, with user approval; the exception is recorded in shared spec 10, `AGENTS.md`, and the READMEs. The original deferred-task text is kept below for history; its bundled-data and OS-ICU alternatives were not pursued.
+
+---
+
+## Original deferred task (historical)
+
+
+### Context and gate
 
 T6 passed full independent acceptance (see `STATUS.md`) within the user-approved temporary Eastern fallback described here; this task remains a required deferred dependency. T6's earlier independent review found that stock Windows Python may not have named IANA timezone data available. The approved temporary behavior is to try the requested named `TZID` first, then assume US Eastern Time with daylight saving time and emit a visible warning if that zone's data is unavailable; if the fallback data is also unavailable or unusable, schedule fit remains unknown with a warning. Users may also make zone data available through `PYTHONTZPATH` where Python's `zoneinfo` can use it. The Eastern fallback is explicitly temporary and does not establish fit in the requested zone. The existing synthetic DST arithmetic tests do not establish that reliable IANA data is available automatically on normal installations. See `tools/agentlog/STATUS.md`, shared spec 10 and handoff 15 for the scoring rules and acceptance protocol. This task is deferred and needs explicit user authorization before dispatch.
 
 The dependency is a reliable, automatically available IANA timezone database, including historical transitions, for schedule matching. A fresh implementer must first establish a feasible data source and distribution design; a fresh independent verifier must then pass the implementation before this dependency is considered resolved. If feasibility, provenance, licensing, coverage, or accuracy cannot be established, stop and report the specific blocker rather than claim support.
 
-## Objective and constraints
+### Objective and constraints
 
 Make supported named-`TZID` automation schedules work automatically offline on normal supported installations, including stock Windows Python 3.13+, without requiring users to install data, set environment variables, run a preparation command, or have network access. Retain Python 3.11+ on non-Windows platforms. Use only the Python standard library at runtime; do not download data or call a network service or LLM. Never modify session logs or user configuration directories. Use only synthetic, hand-written test fixtures; do not commit real logs, secrets, or account identifiers. Follow the repository license-header template exactly for source files; do not invent attribution.
 
 IANA identifiers and historical offsets, daylight-saving transitions, political changes, and aliases must be resolved from an actual reliable IANA-derived source. Windows timezone rules or a Windows-to-IANA mapping alone are not equivalent to full IANA historical data. Do not silently return a fixed offset, UTC, an unrelated zone, or extrapolated transitions outside verified coverage as if authoritative. If the source or a requested zone, date, or coverage cannot be validated, preserve unknown schedule evidence, not a confirmed fit or miss, and provide a useful diagnostic where appropriate. The ranking remains confirmed fit > unknown > confirmed miss after prompt and cwd scoring; misses remain eligible.
 
-## Feasibility and design work
+### Feasibility and design work
 
 Evaluate, document, and independently verify the chosen source before relying on it. Candidates include a versioned prepackaged IANA-derived TZif database shipped with the distribution, or an OS-provided ICU timezone database accessed using `ctypes` if demonstrably available and sufficient. OS ICU is a proposal, not an established solution: investigate Windows availability and supported versions, ABI/export details, enumeration, canonical identifiers and aliases, unknown-ID behavior (ICU may silently substitute GMT), transition and historical coverage, and how Python obtains correct `tzinfo` behavior. Any generated transitions must have explicit verified bounds and provenance; do not silently extrapolate past those bounds. Check ordinary non-Windows installations too. Prefer the simplest approach that meets all acceptance criteria; do not assume the host has a complete IANA database.
 
@@ -20,13 +33,13 @@ For any bundled or generated data, establish its authoritative source, release v
 
 Replace the user-provided-data prerequisite as the normal documented path once the new design is proven. Remove or revise obsolete fallback instructions and code paths that imply manual setup is required for normal operation; retain safe unknown handling for genuine failure. Preserve supported scheduling semantics in handoff 15, including UTC elapsed hourly cadence, both real instants in a repeated local hour, exclusion of nonexistent local times, and no occurrences before DTSTART. Unsupported rules remain unknown.
 
-## Proposed ownership and execution
+### Proposed ownership and execution
 
 This is a separate task, not an implicit expansion of T6 or T9. Before dispatch, the orchestrator should approve an explicit file ownership list after the design is selected: likely `agentlog/automations.py`, a narrowly scoped timezone helper and packaged data/metadata if needed, relevant `tests/test_automations.py` and timezone tests, `pyproject.toml` or other packaging files, and the affected README section. Coordinate shared files with T6 and T9 owners; do not change unrelated files. Maintainer update documentation and license notices belong in the explicitly assigned list. Treat any material architecture or unresolved data-rights decision as a blocker for the orchestrator, not as permission to add a runtime dependency.
 
 Use a fresh implementer and a separate fresh verifier who has not seen the implementer's transcript, according to shared spec 10 section 8. Select task size after feasibility is known; the verifier is one size below the implementer, minimum Luna. Advance only on independent PASS; apply the existing failure escalation and stop rules. This task's PASS is its own gate; after it, re-run both full suites and `doctor` as the wave gate requires. Follow the current user instruction to stop immediately on a zstd execution or handling issue, and the repository Avast stop protocol; never stage, commit, or stash.
 
-## Acceptance checks
+### Acceptance checks
 
 - [ ] On a clean stock Windows Python 3.13+ environment with no configured `PYTHONTZPATH` or separately installed timezone package, install the actual built distribution and demonstrate named-zone schedule matching automatically and offline. Verify no network access, including during installation and runtime. Also exercise supported non-Windows Python 3.11+ installations, including a case without host timezone data; the selected design must provide normal automatic operation there too.
 - [ ] Using synthetic schedules and independently established reference transitions for the declared data version, test ordinary dates, spring gaps, autumn folds (both instants), non-hour offsets and transitions, historical rule changes, and a political rule change. Test aliases, invalid identifiers, and a real UTC zone separately so an unknown name cannot pass as GMT. Verify correct schedule fit, miss, unknown, and candidate ranking through the public matching path, not just a mocked timezone object.

@@ -11,5 +11,5 @@ For commercial licensing inquiries, please contact `andrew_murphy_datapro@outloo
 
 ## Tools
 
-- [agentlog](tools/agentlog/README.md) is a local, standard-library-only toolkit for census, profiling, compression, loop detection, comparison, automation trends, and search across Codex and Claude Code session logs.
+- [agentlog](tools/agentlog/README.md) is a local, standard-library-only toolkit (plus `tzdata` timezone data on Windows) for census, profiling, compression, loop detection, comparison, automation trends, and search across Codex and Claude Code session logs.
 - [codeclaims](tools/codeclaims/README.md) checks source-code claims against a codebase.

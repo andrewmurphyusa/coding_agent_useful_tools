@@ -7,7 +7,7 @@ name = "agentlog"
 version = "0.1.0"
 description = "Local analysis tools for coding-agent session logs"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ['tzdata; sys_platform == "win32"']
 
 [project.scripts]
 agentlog = "agentlog.cli:main"

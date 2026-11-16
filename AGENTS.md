@@ -1,6 +1,6 @@
 # Agent Repository Rules
 
-- Keep runtime code standard-library-only unless the tool's specification explicitly permits an optional external binary.
+- Keep runtime code standard-library-only unless the tool's specification explicitly permits an optional external binary. Exception: agentlog declares `tzdata; sys_platform == "win32"` (data only, read by the standard-library `zoneinfo`).
 - Never access the network or call an LLM from these tools.
 - Never modify session logs or anything under user configuration directories. Use synthetic, hand-written fixtures only; never commit real logs, secrets, or account identifiers.
 - Add license headers from `file_header_template.txt` to source files, using comments appropriate to the language. Do not invent or alter attribution.

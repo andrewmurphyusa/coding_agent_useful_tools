@@ -24,6 +24,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install agentlog (pulls tzdata on Windows)
+        working-directory: tools/agentlog
+        run: python -m pip install .
       - name: Run agentlog tests
         working-directory: tools/agentlog
         run: python -m unittest discover -s tests

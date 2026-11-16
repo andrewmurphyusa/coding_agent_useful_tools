@@ -17,11 +17,10 @@ import warnings
 from pathlib import Path
 import unittest
 from argparse import Namespace
-from contextlib import chdir, nullcontext, redirect_stderr, redirect_stdout
+from contextlib import chdir, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from itertools import permutations
-from types import SimpleNamespace
 from unittest.mock import patch
 from agentlog import automations
 from agentlog.cli import main
@@ -325,20 +324,6 @@ class AutomationTests(unittest.TestCase):
         self.assertTrue(all(call.args == ('Synthetic/Eastern',) for call in constructor.call_args_list))
         self.assertEqual(caught, [])
 
-    def test_daily_weekly_fallback_reject_gaps_and_use_first_fold(self):
-        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-        with patch('zoneinfo.ZoneInfo', side_effect=ZoneInfoNotFoundError), \
-                patch('zoneinfo.ZoneInfo.from_file', side_effect=ZoneInfo.from_file), \
-                patch.dict('sys.modules', {'winreg': self._eastern_registry()}), \
-                warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter('always')
-            self._check_calendar_transition_fit('Missing/Other_Zone')
-            self._check_calendar_transition_fit('Missing/Other_Zone', second=30)
-        self.assertTrue(caught)
-        for item in caught:
-            self.assertIn('assuming US Eastern Time with DST', str(item.message))
-            self.assertIn('Windows Eastern Standard Time', str(item.message))
-
     def test_hourly_interval_and_tolerance_remain_utc_across_dst(self):
         for second in (0, 30):
             self._check_hourly_transition_fit(second)
@@ -403,90 +388,68 @@ class AutomationTests(unittest.TestCase):
                 with self.subTest(started=started, order=[c['id'] for c in order]):
                     self.assertEqual(automations.match_detail(meta, events, order), (expected, 'matched'))
 
-    def _eastern_registry(self):
-        # Hand-written Windows TZI fixtures, independent of the host's database.
-        def tzi(start_month, start_week, end_month, end_week):
-            return struct.pack('<lll16H', 300, 0, -60,
-                               0, end_month, 0, end_week, 2, 0, 0, 0,
-                               0, start_month, 0, start_week, 2, 0, 0, 0)
-        values = {'FirstEntry': 2006, 'LastEntry': 2026,
-                  '2006': tzi(4, 1, 10, 5),
-                  **{str(year): tzi(3, 2, 11, 1) for year in range(2007, 2027)}}
-        return SimpleNamespace(HKEY_LOCAL_MACHINE=0,
-                               OpenKey=lambda *args: nullcontext('synthetic'),
-                               QueryValueEx=lambda key, name: (values[name], 0))
-
-    def test_windows_eastern_rules_preserve_offsets_folds_gaps_and_history(self):
-        with patch.dict('sys.modules', {'winreg': self._eastern_registry()}):
-            zone, description = automations._windows_eastern_zone(2006, 2026)
-        self.assertIn('2006-2026', description)
-        self.assertNotIn('extrapolated', description)
-        for stamp, offset, fold in [('2026-01-01T12:00:00', -5, 0),
-                                    ('2026-07-01T12:00:00', -4, 0),
-                                    ('2026-03-08T06:59:59', -5, 0),
-                                    ('2026-03-08T07:00:00', -4, 0),
-                                    ('2026-11-01T05:15:00', -4, 0),
-                                    ('2026-11-01T06:15:00', -5, 1),
-                                    ('2006-03-20T12:00:00', -5, 0),
-                                    ('2006-04-03T12:00:00', -4, 0)]:
-            with self.subTest(stamp=stamp):
-                local = datetime.fromisoformat(stamp).replace(tzinfo=timezone.utc).astimezone(zone)
-                self.assertEqual(local.utcoffset(), timedelta(hours=offset))
-                self.assertEqual(local.fold, fold)
-        gap = datetime(2026, 3, 8, 2, 15, tzinfo=zone)
-        self.assertNotEqual(gap.astimezone(timezone.utc).astimezone(zone).hour, 2)
-
-    def test_missing_named_zone_uses_windows_eastern_with_visible_assumption(self):
-        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-        rule = ('DTSTART;TZID=Missing/Other_Zone:20261101T003000'
-                '\nRRULE:FREQ=HOURLY;INTERVAL=2;BYHOUR=1;BYMINUTE=15')
-        with patch('zoneinfo.ZoneInfo', side_effect=ZoneInfoNotFoundError), \
-                patch.dict('sys.modules', {'winreg': self._eastern_registry()}), \
-                warnings.catch_warnings(record=True) as caught:
-            # Patch only the constructor, preserving the real from_file loader.
-            with patch('zoneinfo.ZoneInfo.from_file', side_effect=ZoneInfo.from_file):
-                self.assertTrue(automations._schedule_fit(rule, '2026-11-01T06:15:00Z'))
-                self.assertFalse(automations._schedule_fit(rule, '2026-11-01T07:45:01Z'))
-                gap_rule = rule.replace('20261101', '20260308').replace('BYHOUR=1', 'BYHOUR=2')
-                self.assertFalse(automations._schedule_fit(gap_rule, '2026-03-08T07:15:00Z'))
-        messages = '\n'.join(str(item.message) for item in caught)
-        self.assertIn('Missing/Other_Zone', messages)
-        self.assertIn('assuming US Eastern Time with DST', messages)
-        self.assertIn('Windows Eastern Standard Time', messages)
-        self.assertIn('does not confirm fit', messages)
-
-    def test_missing_zone_prefers_available_new_york_without_windows(self):
-        from zoneinfo import ZoneInfoNotFoundError
-        eastern = timezone(timedelta(hours=-4))
-        with patch('zoneinfo.ZoneInfo', side_effect=[ZoneInfoNotFoundError, eastern]) as constructor, \
-                patch.object(automations, '_windows_eastern_zone') as windows, \
-                self.assertWarnsRegex(UserWarning, 'Missing/Non_Eastern.*America/New_York'):
-            zone = automations._schedule_zone('Missing/Non_Eastern', 2026, 2026)
-        self.assertIs(zone, eastern)
-        self.assertEqual(constructor.call_args_list[0].args, ('Missing/Non_Eastern',))
-        windows.assert_not_called()
-
     def test_existing_named_zone_is_unaltered_and_silent(self):
         eastern = timezone(timedelta(hours=-5))
         with patch('zoneinfo.ZoneInfo', return_value=eastern) as constructor, \
-                patch.object(automations, '_windows_eastern_zone') as windows, \
                 warnings.catch_warnings(record=True) as caught:
-            self.assertIs(automations._schedule_zone('Available/Zone', 2026, 2026), eastern)
+            warnings.simplefilter('always')
+            self.assertIs(automations._schedule_zone('Available/Zone'), eastern)
         constructor.assert_called_once_with('Available/Zone')
-        windows.assert_not_called()
         self.assertEqual(caught, [])
 
-    def test_cli_fallback_warning_is_on_stderr_and_assumed_fit_affects_matching(self):
+    def test_unavailable_zone_is_unknown_and_redacts_warning(self):
         from zoneinfo import ZoneInfoNotFoundError
-        with patch.dict('sys.modules', {'winreg': self._eastern_registry()}):
-            zone, source = automations._windows_eastern_zone(2025, 2027)
-        root = self.root / 'fallback-cli'
+        secret = 'sk-' + 'a' * 48
+        rule = f'DTSTART;TZID={secret}:20260101T003000\nRRULE:FREQ=HOURLY'
+        for error in (ZoneInfoNotFoundError('missing'), ValueError('bad key')):
+            with self.subTest(error=type(error)), \
+                    patch('zoneinfo.ZoneInfo', side_effect=error), \
+                    warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter('always')
+                self.assertIsNone(automations._schedule_fit(rule, '2026-01-01T05:00:00Z'))
+            message = str(caught[0].message)
+            self.assertNotIn(secret, message)
+            self.assertIn('[REDACTED:', message)
+            self.assertIn('schedule fit is unknown', message)
+            self.assertNotIn('Eastern', message)
+
+    def test_missing_timezone_data_warning_names_tzdata_only_when_no_data(self):
+        from zoneinfo import ZoneInfoNotFoundError
+        rule = 'DTSTART;TZID=Missing/Zone:20260101T003000\nRRULE:FREQ=DAILY;BYHOUR=1;BYMINUTE=0'
+        for spec, expect_hint in ((None, True), (object(), False)):
+            with self.subTest(tzdata_present=spec is not None), \
+                    patch('zoneinfo.ZoneInfo', side_effect=ZoneInfoNotFoundError('missing')), \
+                    patch('zoneinfo.TZPATH', ()), \
+                    patch('importlib.util.find_spec', return_value=spec), \
+                    warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter('always')
+                self.assertIsNone(automations._schedule_fit(rule, '2026-01-02T06:00:00Z'))
+            self.assertEqual('pip install tzdata' in str(caught[0].message), expect_hint)
+
+    def test_real_iana_new_york_rules_when_available(self):
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo('America/New_York')
+        except ZoneInfoNotFoundError:
+            self.skipTest('no IANA timezone data in this environment (install tzdata)')
+        rule = 'DTSTART;TZID=America/New_York:20260101T060000\nRRULE:FREQ=DAILY;BYHOUR=6;BYMINUTE=0'
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            self.assertTrue(automations._schedule_fit(rule, '2026-01-15T11:00:00Z'))   # 06:00 EST
+            self.assertTrue(automations._schedule_fit(rule, '2026-07-15T10:00:00Z'))   # 06:00 EDT
+            self.assertFalse(automations._schedule_fit(rule, '2026-07-15T13:00:00Z'))  # 09:00 EDT
+            gap = 'DTSTART;TZID=America/New_York:20260301T003000\nRRULE:FREQ=DAILY;BYHOUR=2;BYMINUTE=15'
+            self.assertFalse(automations._schedule_fit(gap, '2026-03-08T07:15:00Z'))   # 02:15 spring gap
+        self.assertEqual(caught, [])
+
+    def test_unknown_zone_warning_reaches_stderr_from_cli(self):
+        from zoneinfo import ZoneInfoNotFoundError
+        root = self.root / 'unknown-zone-cli'
         root.mkdir()
-        (root / 'automation.toml').write_text('id = "eastern"', encoding='utf-8')
+        (root / 'automation.toml').write_text('id = "named"', encoding='utf-8')
         prompt = 'one two three four five six seven eight nine'
         rule = 'DTSTART;TZID=Missing/Other_Zone:20260101T120000\nRRULE:FREQ=DAILY;BYHOUR=12'
-        configs = [{'id': 'eastern', 'prompt': prompt, 'rrule': rule, '_dir': root},
-                   {'id': 'unknown', 'prompt': prompt, 'rrule': 'FREQ=MONTHLY', '_dir': root}]
+        configs = [{'id': 'named', 'prompt': prompt, 'rrule': rule, '_dir': root}]
         meta = SessionMeta('synthetic', 'codex', 'synthetic', 0, thread_source='automation',
                            started='2026-01-02T17:00:00Z')
         events = [Event(0, kind='user_msg', text=prompt)]
@@ -495,42 +458,18 @@ class AutomationTests(unittest.TestCase):
                 patch.object(automations, 'discover_sessions', return_value=['synthetic']), \
                 patch.object(automations, 'read_session', side_effect=lambda path: iter([meta, *events])), \
                 patch('zoneinfo.ZoneInfo', side_effect=ZoneInfoNotFoundError), \
-                patch.object(automations, '_windows_eastern_zone', return_value=(zone, source)), \
                 warnings.catch_warnings(), redirect_stdout(stdout), redirect_stderr(stderr):
             warnings.simplefilter('always')
-            self.assertEqual(main(['automations', 'runs', 'eastern', '--json', '--out', str(root / 'report')]), 0)
-        self.assertEqual(json.loads(stdout.getvalue())[0]['automation_id'], 'eastern')
+            self.assertEqual(main(['automations', 'runs', 'named', '--json', '--out', str(root / 'report')]), 0)
+        self.assertEqual(json.loads(stdout.getvalue())[0]['automation_id'], 'named')
         self.assertIn('Missing/Other_Zone', stderr.getvalue())
-        self.assertIn('assuming US Eastern Time with DST', stderr.getvalue())
-        self.assertIn('may change matching', stderr.getvalue())
-        self.assertEqual(configs[0]['rrule'], rule)
+        self.assertIn('schedule fit is unknown', stderr.getvalue())
 
-    def test_unavailable_fallback_remains_unknown_and_redacts_warning(self):
-        from zoneinfo import ZoneInfoNotFoundError
-        secret = 'sk-' + 'a' * 48
-        rule = f'DTSTART;TZID={secret}:20260101T003000\nRRULE:FREQ=HOURLY'
-        for error in (ImportError('no registry'), OSError('no rules'), ValueError('bad rules')):
-            with self.subTest(error=type(error)), \
-                    patch('zoneinfo.ZoneInfo', side_effect=ZoneInfoNotFoundError), \
-                    patch.object(automations, '_windows_eastern_zone', side_effect=error), \
-                    warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter('always')
-                self.assertIsNone(automations._schedule_fit(rule, '2026-01-01T05:00:00Z'))
-            message = str(caught[0].message)
-            self.assertNotIn(secret, message)
-            self.assertIn('[REDACTED:', message)
-            self.assertIn('schedule fit is unknown', message)
-            self.assertNotIn(str(error), message)
-
-    def test_windows_edge_year_assumption_is_disclosed_and_bad_rules_fail_closed(self):
-        with patch.dict('sys.modules', {'winreg': self._eastern_registry()}):
-            _, description = automations._windows_eastern_zone(2026, 2028)
-            self.assertIn('edge-year rules extrapolated', description)
-        registry = self._eastern_registry()
-        registry.QueryValueEx = lambda key, name: (2026 if name in ('FirstEntry', 'LastEntry') else b'bad', 0)
-        with patch.dict('sys.modules', {'winreg': registry}):
-            with self.assertRaises(struct.error):
-                automations._windows_eastern_zone(2026, 2026)
+    def test_pyproject_requires_tzdata_on_windows_only(self):
+        import tomllib
+        data = tomllib.loads((Path(__file__).resolve().parents[1] / 'pyproject.toml').read_text(encoding='utf-8'))
+        deps = [d.replace(' ', '') for d in data['project']['dependencies']]
+        self.assertEqual(deps, ['tzdata;sys_platform=="win32"'])
 
     def test_snapshot_cli_copies_every_file_only_after_hash_change(self):
         root = self.root / 'snapshot-cli'
