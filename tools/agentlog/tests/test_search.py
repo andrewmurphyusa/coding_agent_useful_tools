@@ -109,9 +109,17 @@ class SearchTests(unittest.TestCase):
         finally: path.unlink()
 
     def test_archive_indexing(self):
-        if not shutil.which('zstd'): self.skipTest('zstd executable unavailable')
         archive = self.source / 'synthetic.jsonl.zst'
-        subprocess.run(['zstd', '-q', '-f', str(self.path), '-o', str(archive)], check=True)
+        try:
+            from compression import zstd as native_zstd  # Python 3.14+
+        except ImportError:
+            native_zstd = None
+        if native_zstd is not None:
+            archive.write_bytes(native_zstd.compress(self.path.read_bytes()))
+        elif shutil.which('zstd'):
+            subprocess.run(['zstd', '-q', '-f', str(self.path), '-o', str(archive)], check=True)
+        else:
+            self.skipTest('neither compression.zstd nor the zstd executable is available')
         try:
             code, out, _ = self.call('index', '--root', archive, '--db', self.db, '--rebuild', '--include-archived', '--json')
             self.assertEqual(code, 0); self.assertEqual(json.loads(out)['messages'], 2)
