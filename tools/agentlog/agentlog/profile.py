@@ -18,7 +18,7 @@ import re
 from .core.config import add_common_arguments, default_out
 from .core.out import write_outputs, summary
 from .core.paths import checked_destination
-from .readers.discover import load_session
+from .readers.discover import load_session, input_paths
 
 CATEGORIES = {'tool_call', 'tool_result', 'assistant_msg', 'reasoning', 'user_msg', 'context'}
 LIMIT = re.compile(r'rate[ -]limit|usage[ -]limit|quota|context length|context window', re.I)
@@ -164,12 +164,29 @@ def _markdown(data):
     return '\n'.join(lines)
 
 def run(args):
-    meta, events = load_session(args.session, args.root)
+    meta, events = load_session(args.session, args.root, threads_csv=getattr(args, 'threads_csv', None))
     data = analyze(meta, events)
-    directory = checked_destination(Path(args.out) if args.out else default_out(meta.session_id), inputs=(meta.path,))
-    target = checked_destination(directory / 'profile.csv', inputs=(meta.path,))
+    if meta.partial:
+        data['partial'] = True
+        data['partial_reason'] = meta.partial_reason
+    threads = meta.extra.get('threads')
+    if threads is not None: data['threads'] = threads
+    inputs = input_paths([meta], getattr(args, 'threads_csv', None))
+    directory = checked_destination(Path(args.out) if args.out else default_out(meta.session_id), inputs=inputs)
+    for suffix in ('md', 'json'): checked_destination(directory / ('profile.' + suffix), inputs=inputs)
+    target = checked_destination(directory / 'profile.csv', inputs=inputs)
     if target.is_symlink() or (target.exists() and target.stat().st_nlink > 1): raise ValueError('Report files must not be symlinks or hard links')
-    directory = write_outputs('profile', meta, data, _markdown(data), args.out, max_tokens=3000)
+    markdown = _markdown(data)
+    if meta.partial: markdown = 'Partial session: ' + str(meta.partial_reason) + '\n\n' + markdown
+    if threads is not None:
+        from .core.out import cap_text
+        from .core.tokens import est_tokens
+        columns = ('thread_id', 'parent', 'source', 'requests', 'tokens', 'start', 'end')
+        section = '## Sub-threads (from CSV; not in dumps)\n| Thread | Parent | Source | Requests | Tokens | Start | End |\n|---|---|---|---:|---:|---|---|\n'
+        section += '\n'.join('| ' + ' | '.join(str(row.get(key) or '').replace('|', '\\|').replace('\n', ' ') for key in columns) + ' |' for row in threads)
+        section = cap_text(section, 1200)
+        markdown = section + '\n\n' + cap_text(markdown, max(1, 2850 - est_tokens(section)))
+    directory = write_outputs('profile', meta, data, markdown, args.out, max_tokens=3000)
     fields = ['seq', 'turn', 'ts', 'context_used', 'context_source', 'input', 'cached_input', 'cache_creation_input', 'output', 'reasoning', 'total', 'uncached_input', 'tokens_added', 'cumulative_total', 'sources']
     with (directory/'profile.csv').open('w', encoding='utf-8', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fields, lineterminator='\n'); writer.writeheader(); writer.writerows(data['calls'])

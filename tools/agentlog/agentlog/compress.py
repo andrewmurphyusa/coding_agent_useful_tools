@@ -32,7 +32,7 @@ from .core.out import dumps, summary, view_header
 from .core.paths import checked_destination
 from .core.redact import redact
 from .core.tokens import est_tokens
-from .readers.discover import read_session, resolve_session
+from .readers.discover import read_session, resolve_session, input_paths
 from .sequences import find_loops, find_sequences
 
 _MARKERS = {"token_usage", "settings", "other"}
@@ -532,13 +532,16 @@ def _write_reports(directory, meta, data, rendered, stats_rendered):
 
 def _run(args):
     path = resolve_session(args.session, args.root, source=args.source)
-    stream = read_session(path, source=args.source)
+    stream = read_session(path, source=args.source, threads_csv=getattr(args, 'threads_csv', None))
     meta = next(stream)
     data = compress_session(meta, stream, unit=args.unit, chunk_lines=args.chunk_lines,
                             near=args.near, min_block_tokens=args.min_block_tokens,
                             body_cap=args.body_cap, max_period=args.max_period,
                             min_reps=args.min_reps, lossless=args.lossless)
-    directory = checked_destination(args.out or default_out(meta.session_id), inputs=(path,))
+    inputs = input_paths([meta], getattr(args, 'threads_csv', None))
+    directory = checked_destination(args.out or default_out(meta.session_id), inputs=inputs)
+    for name in ('compress.md', 'compress.json', 'compress-stats.md'):
+        checked_destination(directory / name, inputs=inputs)
     stats_candidate = directory / "compress-stats.md"
     stats_path = checked_destination(stats_candidate, inputs=(path,))
     if stats_candidate.is_symlink() or (stats_path.exists() and stats_path.stat().st_nlink > 1):
@@ -571,7 +574,7 @@ def register(subparsers):
                     "if mandatory structure cannot fit; raise AGENTLOG_HARD_CAP if appropriate.")
     parser.add_argument("session")
     parser.add_argument("--root", action="append", type=Path)
-    parser.add_argument("--source", choices=("codex", "claude", "generic"))
+    parser.add_argument("--source", choices=("codex", "claude", "generic", "requestdump"))
     parser.add_argument("--unit", choices=("event", "chunk"), default="event")
     parser.add_argument("--chunk-lines", type=int, default=40)
     parser.add_argument("--near", type=float, default=0.85)

@@ -20,7 +20,7 @@ from .core.redact import redact
 from .core.refs import parse_ref
 from .core.paths import checked_destination
 from .core.tokens import est_tokens
-from .readers.discover import load_session
+from .readers.discover import load_session, input_paths
 
 
 def _entries(data, key):
@@ -224,7 +224,7 @@ def run(args):
     def session(ref):
         nonlocal meta
         if not ref: raise ValueError("--session is required for unqualified references")
-        if ref not in sessions: sessions[ref]=load_session(ref,args.root)
+        if ref not in sessions: sessions[ref]=load_session(ref,args.root,threads_csv=getattr(args,'threads_csv',None))
         meta,events=sessions[ref]; return meta,events
     for requested in args.refs:
         range_match=re.fullmatch(r"(?:(?P<session>[A-Za-z0-9-]{8,}):)?E(?P<start>\d+)-E(?P<end>\d+)",requested)
@@ -275,7 +275,7 @@ def run(args):
     json_text = dumps({"references": args.refs, "results": found}) + "\n"
     directory=Path(args.out) if args.out else default_out(meta.session_id)
     for target in (directory, directory/"show.md", directory/"show.json"):
-        checked_destination(target, inputs=[m.path for m, _ in sessions.values()])
+        checked_destination(target, inputs=input_paths([m for m, _ in sessions.values()],getattr(args,'threads_csv',None)))
         if target != directory and (target.is_symlink() or (target.exists() and target.stat().st_nlink > 1)):
             raise ValueError("Report files must not be symlinks or hard links")
     directory.mkdir(parents=True, exist_ok=True)

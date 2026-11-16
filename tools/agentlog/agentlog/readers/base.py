@@ -10,7 +10,7 @@
 #     with subject line: "Commercial Licensing Request for coding-agent-useful-tools".
 
 """Public normalized event contract and reader utilities."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
@@ -50,6 +50,9 @@ class SessionMeta:
     context_window: int | None = None
     instructions_sha1: str | None = None
     automation_id: str | None = None
+    partial: bool = False
+    partial_reason: str | None = None
+    extra: dict = field(default_factory=dict, hash=False)
 
 @dataclass(frozen=True)
 class Event:
@@ -74,6 +77,11 @@ def as_int(value):
 
 def as_str(value):
     return value if isinstance(value, str) else None
+
+def cwd_prefix_matches(value, prefixes):
+    if not isinstance(value, str): return False
+    value = value.replace('\\', '/').casefold()
+    return any(value.startswith(prefix.replace('\\', '/').casefold()) for prefix in prefixes if isinstance(prefix, str))
 
 def utc(value):
     if not isinstance(value, str): return None

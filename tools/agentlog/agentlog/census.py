@@ -18,7 +18,7 @@ from .core.config import add_common_arguments, default_out
 from .core.out import summary, write_outputs
 from .core.paths import checked_destination
 from .readers.base import SessionMeta
-from .readers.discover import discover_sessions, read_session, resolve_session
+from .readers.discover import discover_sessions, read_session, resolve_session, input_paths
 
 
 def command_head(text):
@@ -80,7 +80,7 @@ def run(args):
         paths = [resolve_session(args.session[0], args.root, source=args.source)]
     metas=[]; streams=[]
     for path in sorted(set(paths), key=str):
-        stream=read_session(path, source=args.source); meta=next(stream)
+        stream=read_session(path, source=args.source, threads_csv=getattr(args,'threads_csv',None)); meta=next(stream)
         if args.since and (not meta.started or meta.started < args.since): continue
         if args.until and (not meta.started or meta.started[:len(args.until)] > args.until): continue
         metas.append(meta); streams.append(stream)
@@ -88,7 +88,7 @@ def run(args):
     meta=metas[0] if len(metas)==1 else SessionMeta("aggregate", "generic", "", sum(m.bytes for m in metas))
     directory=Path(args.out) if args.out else default_out(meta.session_id)
     for target in (directory, directory/"census.md", directory/"census.json"):
-        checked_destination(target, inputs=[m.path for m in metas])
+        checked_destination(target, inputs=input_paths(metas,getattr(args,'threads_csv',None)))
     data=_census_streams(meta, streams); data["sessions"] = len(metas)
     lines=[]
     for label in ("raw_type", "kind", "tools", "command_heads"):
@@ -100,4 +100,4 @@ def run(args):
 
 
 def register(subparsers):
-    p=subparsers.add_parser("census"); p.add_argument("session",nargs="*"); p.add_argument("--all",action="store_true"); p.add_argument("--root",action="append"); p.add_argument("--source",choices=("codex","claude","generic")); p.add_argument("--since"); p.add_argument("--until"); add_common_arguments(p); p.set_defaults(func=run)
+    p=subparsers.add_parser("census"); p.add_argument("session",nargs="*"); p.add_argument("--all",action="store_true"); p.add_argument("--root",action="append"); p.add_argument("--source",choices=("codex","claude","generic","requestdump")); p.add_argument("--since"); p.add_argument("--until"); add_common_arguments(p); p.set_defaults(func=run)

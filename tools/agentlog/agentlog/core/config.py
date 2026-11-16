@@ -37,6 +37,7 @@ def default_out(session_id):
 def add_common_arguments(parser, *, view=False):
     parser.add_argument("--out", type=Path)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--threads-csv", type=Path)
     if view: parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     return parser
 

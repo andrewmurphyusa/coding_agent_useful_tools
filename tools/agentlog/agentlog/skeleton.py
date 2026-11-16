@@ -19,7 +19,7 @@ from .core.normalize import mask_volatile
 from .core.out import dumps, summary, view_header, write_outputs
 from .core.redact import redact
 from .core.tokens import est_tokens
-from .readers.discover import load_session
+from .readers.discover import load_session, input_paths
 from .show import _entries, _unit_metadata
 
 
@@ -147,7 +147,7 @@ def render(meta, events, max_tokens, raw_values=False, notes=None):
 
 
 def run(args):
-    meta,events=load_session(args.session,args.root)
+    meta,events=load_session(args.session,args.root,threads_csv=getattr(args,'threads_csv',None))
     if args.range:
         match=re.fullmatch(r"E(\d+)-E(\d+)",args.range)
         if not match or int(match[1])>int(match[2]): raise ValueError("--range must be E<start>-E<end>")
@@ -157,6 +157,9 @@ def run(args):
         if not match or int(match[1])>int(match[2]): raise ValueError("--turns must be <start>-<end>")
         events=[e for e in events if int(match[1])<=e.turn<=int(match[2])]
     directory=Path(args.out) if args.out else default_out(meta.session_id); notes={}; path=directory/"compress.json"
+    from .core.paths import checked_destination
+    for target in (directory, directory/'skeleton.md', directory/'skeleton.json'):
+        checked_destination(target, inputs=input_paths([meta],getattr(args,'threads_csv',None)))
     if path.is_file(): notes=annotations(json.loads(path.read_text(encoding="utf-8")))
     body=render(meta,events,args.max_tokens,args.raw_values,notes)
     write_outputs("skeleton",meta,{"view":body},body,args.out,max_tokens=args.max_tokens)

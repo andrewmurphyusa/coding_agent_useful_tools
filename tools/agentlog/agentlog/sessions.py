@@ -30,13 +30,17 @@ def _duration(start, end):
 
 
 def run(args):
+    if getattr(args, "indexed", False):
+        from .search import run_indexed_sessions
+        return run_indexed_sessions(args)
     if args.automation:
         try: from . import automations
         except ImportError: raise ValueError("--automation requires the automations plugin") from None
         if not hasattr(automations, "match"): raise ValueError("--automation requires automations.match")
     paths=list(discover_sessions(args.root)); cache_name=Path("agentlog-out/.cache/sessions.jsonl")
+    inputs=paths + ([args.threads_csv] if getattr(args,'threads_csv',None) and args.source in (None,'requestdump') and any(p.is_dir() for p in paths) else [])
     if cache_name.is_symlink(): raise ValueError("Cache must not be a symlink")
-    cache_path=checked_destination(cache_name,inputs=paths)
+    cache_path=checked_destination(cache_name,inputs=inputs)
     cache={}
     if cache_path.is_file():
         for line in cache_path.read_text(encoding="utf-8").splitlines():
@@ -45,16 +49,18 @@ def run(args):
             except (ValueError, KeyError, TypeError): continue
     rows=[]; updated=[]
     for path in paths:
+        if path.is_dir() and args.source not in (None,'requestdump'): continue
         stat=path.stat(); key=(str(path.resolve()),stat.st_size,stat.st_mtime_ns)
-        item=cache.get(key)
+        item=cache.get(key) if not path.is_dir() else None
         if item is None:
             try:
-                stream=read_session(path); meta=next(stream); events=turns=compactions=errors=0
+                stream=(read_session(path,threads_csv=args.threads_csv) if path.is_dir() and getattr(args,'threads_csv',None) else read_session(path)); meta=next(stream); events=turns=compactions=errors=0
                 for e in stream:
                     events+=1; turns=max(turns,e.turn); compactions+=e.kind=="compaction"; errors+=e.kind=="error"
             except ZstdUnavailable: continue
             item={"path":key[0],"size":key[1],"mtime_ns":key[2],"meta":asdict(meta),"events":events,"turns":turns,"compactions":compactions,"errors":errors}
-        updated.append(item); m=item["meta"]
+        if not path.is_dir(): updated.append(item)
+        m=item["meta"]
         if args.source and m["source"]!=args.source: continue
         if args.since and (not m["started"] or m["started"] < args.since): continue
         if args.until and (not m["started"] or m["started"][:len(args.until)] > args.until): continue
@@ -69,7 +75,7 @@ def run(args):
     if cache_path.is_symlink() or (cache_path.exists() and cache_path.stat().st_nlink > 1): raise ValueError("Cache must not be a symlink or hard link")
     directory=Path(args.out) if args.out else default_out("sessions")
     for target in (directory, directory/"sessions.md", directory/"sessions.json"):
-        checked_destination(target, inputs=paths)
+        checked_destination(target, inputs=inputs)
     cache_path.parent.mkdir(parents=True,exist_ok=True); cache_path.write_text("".join(dumps(i)+"\n" for i in updated),encoding="utf-8",newline="\n")
     lines=["# Sessions"]
     for i,row in enumerate(rows):
@@ -83,4 +89,4 @@ def run(args):
 
 
 def register(subparsers):
-    p=subparsers.add_parser("sessions"); p.add_argument("--root",action="append"); p.add_argument("--source",choices=("codex","claude")); p.add_argument("--since"); p.add_argument("--until"); p.add_argument("--cwd"); p.add_argument("--thread-source"); p.add_argument("--automation"); p.add_argument("--min-bytes",type=int); p.add_argument("--model"); p.add_argument("--cli-version"); add_common_arguments(p); p.set_defaults(func=run)
+    p=subparsers.add_parser("sessions"); p.add_argument("--root",action="append"); p.add_argument("--source",choices=("codex","claude","requestdump")); p.add_argument("--since"); p.add_argument("--until"); p.add_argument("--cwd"); p.add_argument("--thread-source"); p.add_argument("--automation"); p.add_argument("--min-bytes",type=int); p.add_argument("--model"); p.add_argument("--cli-version"); p.add_argument("--indexed",action="store_true"); p.add_argument("--db",default="agentlog-out/index.sqlite"); p.add_argument("--limit",type=int,default=200); add_common_arguments(p); p.set_defaults(func=run)

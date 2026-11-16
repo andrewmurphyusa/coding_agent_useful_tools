@@ -15,17 +15,25 @@ from contextlib import closing
 import json
 import re
 import sqlite3
-from .base import Usage, as_int, as_str, base_meta, event, fallback_id, text_of, utc
+from .base import Usage, as_int, as_str, base_meta, cwd_prefix_matches, event, fallback_id, text_of, utc
 from ..core.jsonl import iter_records
 from ..core.paths import private_temp_directory
 
 def _dict(value): return value if isinstance(value,dict) else {}
-_CONTEXT = re.compile(r"^\s*(?:<system-reminder>[\s\S]*?</system-reminder>\s*)+$")
-_COMMAND = re.compile(r"^\s*<(?:command-name|local-command|local-command-stdout|command-message)>")
+_COMMAND = re.compile(r'^\s*<(?:command-[\w-]+|local-command(?:-stdout)?)\b[^>]*>', re.I)
+_WRAPPERS = re.compile(r'<(system-reminder|command-[\w-]+|local-command(?:-stdout)?)\b[^>]*>.*?</\1\s*>', re.I | re.S)
 
-def _meta(path):
-    values = {}; started=ended=None
+def strip_context_wrappers(text):
+    return _WRAPPERS.sub('', text)
+
+def _context_text(text):
+    stripped = strip_context_wrappers(text)
+    return not stripped.strip() or bool(_COMMAND.search(stripped))
+
+def _meta(path, cwd_prefixes=()):
+    values = {}; started=ended=None; cwd_match=False
     for _, raw, _ in iter_records(path):
+        if cwd_prefixes: cwd_match = cwd_match or cwd_prefix_matches(raw.get('cwd'), cwd_prefixes)
         ts=utc(raw.get("timestamp"))
         if ts: started=started or ts;ended=ts
         for key in ("sessionId","cwd","version","gitBranch","title"):
@@ -33,15 +41,15 @@ def _meta(path):
         if raw.get("type")=="custom-title": values["title"]=raw.get("customTitle") or raw.get("title")
         model=_dict(raw.get("message")).get("model")
         if model and "model" not in values: values["model"]=model
-    return base_meta(path,"claude",session_id=str(values.get("sessionId") or fallback_id(path)),cwd=values.get("cwd"),cli_version=values.get("version"),model=values.get("model"),git_branch=values.get("gitBranch"),title=values.get("title"),started=started,ended=ended)
+    return base_meta(path,"claude",session_id=str(values.get("sessionId") or fallback_id(path)),cwd=values.get("cwd"),cli_version=values.get("version"),model=values.get("model"),git_branch=values.get("gitBranch"),title=values.get("title"),started=started,ended=ended,extra={'cwd_prefix_match':cwd_match} if cwd_prefixes else {})
 
 def _usage(value):
     inp=as_int(value.get("input_tokens")); cached=as_int(value.get("cache_read_input_tokens")); created=as_int(value.get("cache_creation_input_tokens")); out=as_int(value.get("output_tokens"))
     context=sum(v or 0 for v in (inp,cached,created))
     return Usage(input=inp,cached_input=cached,output=out,reasoning=as_int(_dict(value.get("output_tokens_details")).get("thinking_tokens")),total=context+(out or 0),context_used=context,cache_creation_input=created)
 
-def read(path):
-    yield _meta(path)
+def read(path, cwd_prefixes=()):
+    yield _meta(path, cwd_prefixes)
     # Keep exact IDs on disk, not an evicting cache or a collision-prone digest.
     # The fixed page cache bounds resident memory as request cardinality grows.
     # Only identities are stored; transcript text is never copied to scratch.
@@ -77,7 +85,7 @@ def _events(path, seen_usage):
             is_error=bool(raw.get("isApiErrorMessage")) or "error" in typ.lower()
             yield event(seq,raw,size,kind="error" if is_error else "other",text=text_of(content) if is_error else "",is_error=is_error,sidechain=sidechain,turn=turn,raw_type=typ);seq+=1
             continue
-        has_real_user=typ=="user" and not raw.get("isMeta") and any(isinstance(b,dict) and b.get("type")=="text" and not (_CONTEXT.fullmatch(text_of(b)) or _COMMAND.search(text_of(b))) for b in blocks)
+        has_real_user=typ=="user" and not raw.get("isMeta") and any(isinstance(b,dict) and b.get("type")=="text" and not _context_text(text_of(b)) for b in blocks)
         if has_real_user:turn+=1
         emitted=False
         for block in blocks:
@@ -85,7 +93,7 @@ def _events(path, seen_usage):
             bt=str(block.get("type",""));kw=dict(kind="other",role=typ,text="",sidechain=sidechain,turn=turn,raw_type=typ+"/"+bt)
             if bt=="text":
                 text=text_of(block)
-                context=bool(raw.get("isMeta")) or bool(_CONTEXT.fullmatch(text)) or bool(_COMMAND.search(text))
+                context=bool(raw.get("isMeta")) or _context_text(text)
                 kw.update(kind="context" if context else "user_msg" if typ=="user" else "assistant_msg",text=text)
             elif bt=="thinking":kw.update(kind="reasoning",text=block.get("thinking",""))
             elif bt=="redacted_thinking":kw.update(kind="reasoning",text=f"[encrypted {len(str(block.get('data','')).encode('utf-8'))} bytes]")

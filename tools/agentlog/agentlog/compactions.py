@@ -18,7 +18,7 @@ from .core.config import add_common_arguments
 from .core.normalize import mask_volatile
 from .core.out import write_outputs, summary
 from .core.tokens import est_tokens
-from .readers.discover import load_session
+from .readers.discover import load_session, input_paths
 
 _READ = re.compile(r'\b(?:cat|type|head|tail|less|more|Get-Content|read_file|read|open)\b', re.I)
 _PATH = re.compile(r'''(?:[A-Za-z]:[\\/]|/|\.{0,2}[\\/])?[\w.-]+(?:[\\/][\w. -]+)+|[\w.-]+\.[A-Za-z0-9]{1,12}''')
@@ -80,7 +80,12 @@ def _markdown(data):
     return '\n'.join(lines)
 
 def run(args):
-    meta, events = load_session(args.session, args.root)
+    meta, events = load_session(args.session, args.root, threads_csv=getattr(args, 'threads_csv', None))
+    from .core.paths import checked_destination
+    from .core.config import default_out
+    directory = Path(args.out) if args.out else default_out(meta.session_id)
+    for target in (directory, directory / 'compactions.md', directory / 'compactions.json'):
+        checked_destination(target, inputs=input_paths([meta], getattr(args, 'threads_csv', None)))
     data = analyze(meta, events)
     write_outputs('compactions', meta, data, _markdown(data), args.out, max_tokens=6000)
     summary({'compactions': len(data['compactions']), 'peak_context': data['peak_context']} if data['compactions'] else f"No compactions; peak context: {data['peak_context']}", json_mode=args.json)

@@ -37,11 +37,21 @@ def _doctor(args):
     roots=default_roots();counts={"codex":0,"claude":0,"generic":0}
     # Identify sources from the stream so unsupported archives warn and skip
     # regardless of filename, including archives without the rollout- prefix.
-    for path in discover_sessions(args.root):
+    for path in discover_sessions([args.folder] if args.folder else args.root):
         try:source=detect_source(path)
         except ZstdUnavailable:continue
-        counts[source]+=1
+        counts[source]=counts.get(source,0)+1
     data={"python":platform.python_version(),"fts5":fts5,"compression.zstd":native_available(),"zstd_on_path":shutil.which("zstd") is not None,"roots":{key:{"exists":p.exists()} for key,p in roots.items()},"sessions":counts}
+    if args.folder:
+        from .readers import requestdump
+        from .core.paths import checked_destination
+        if detect_source(args.folder) != 'requestdump': raise ValueError('doctor folder must be a request-dump folder')
+        dump, requests, errors = requestdump.inspect(args.folder, args.threads_csv)
+        data['requestdump'] = {'requests': requests, 'bytes': dump.bytes, 'parse_errors': errors}
+        directory = Path(args.out) if args.out else Path('agentlog-out') / 'doctor'
+        inputs = [args.folder] + ([args.threads_csv] if args.threads_csv else [])
+        for target in (directory, directory/'doctor.md', directory/'doctor.json'):
+            checked_destination(target, inputs=inputs)
     meta=SessionMeta("doctor","generic","",0)
     write_outputs("doctor",meta,data,"\n".join(f"{k}: {v}" for k,v in data.items()),args.out)
     summary(data,json_mode=args.json)
@@ -52,7 +62,7 @@ def build_parser():
     parser.add_argument("--version",action="version",version=__version__)
     subparsers=parser.add_subparsers(dest="command",required=True)
     doctor=subparsers.add_parser("doctor",help="Check local Python, compression and session discovery")
-    add_common_arguments(doctor);doctor.add_argument("--root",action="append",type=Path);doctor.set_defaults(func=_doctor)
+    add_common_arguments(doctor);doctor.add_argument("--root",action="append",type=Path);doctor.add_argument("folder",nargs="?",type=Path);doctor.set_defaults(func=_doctor)
     for name in PLUGINS:
         try:module=importlib.import_module("."+name,__package__)
         except ImportError:continue
