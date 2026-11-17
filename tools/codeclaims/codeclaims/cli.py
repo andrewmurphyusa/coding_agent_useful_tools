@@ -9,6 +9,7 @@
 #    obligations. See COMMERCIAL-LICENSE.md or contact andrew_murphy_datapro@outlook.com
 #     with subject line: "Commercial Licensing Request for coding-agent-useful-tools".
 
+from . import __version__
 import argparse
 import ast
 import configparser
@@ -768,7 +769,7 @@ def markdown(facts,markers,cap):
     return out
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(prog='codeclaims'); sub=parser.add_subparsers(dest='command',required=True)
+    parser=argparse.ArgumentParser(prog='codeclaims'); parser.add_argument('--version',action='version',version=__version__); sub=parser.add_subparsers(dest='command',required=True)
     s=sub.add_parser('scan'); s.add_argument('--repo'); s.add_argument('--out',required=True); s.add_argument('--exclude',action='append'); s.add_argument('--max-md-tokens',type=int); s.add_argument('--config')
     c=sub.add_parser('check'); c.add_argument('--facts',required=True); c.add_argument('--in',dest='input',required=True); c.add_argument('--out',required=True)
     args=parser.parse_args(argv)

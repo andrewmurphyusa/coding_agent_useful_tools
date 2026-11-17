@@ -11,6 +11,10 @@
 
 @echo off
 setlocal
+rem Runs agentlog from this folder without installing it; the working directory is kept.
+rem Set CODING_AGENT_TOOLS_PYTHON to a python.exe path to choose the interpreter.
+set "TOOL_PYTHON=python"
+if defined CODING_AGENT_TOOLS_PYTHON set "TOOL_PYTHON=%CODING_AGENT_TOOLS_PYTHON%"
 set "PYTHONPATH=%~dp0;%PYTHONPATH%"
-python -m agentlog %*
+"%TOOL_PYTHON%" -m agentlog %*
 exit /b %errorlevel%

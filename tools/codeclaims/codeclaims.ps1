@@ -9,6 +9,16 @@
 #    obligations. See COMMERCIAL-LICENSE.md or contact andrew_murphy_datapro@outlook.com
 #     with subject line: "Commercial Licensing Request for coding-agent-useful-tools".
 
-Push-Location $PSScriptRoot
-try { python -m codeclaims @args; $codeclaimsExit = $LASTEXITCODE } finally { Pop-Location }
-exit $codeclaimsExit
+# Runs codeclaims from this folder without installing it. The caller's working
+# directory is kept, so relative paths resolve where the command was run.
+# Set CODING_AGENT_TOOLS_PYTHON to a python.exe path to choose the interpreter.
+$pythonCommand = if ($env:CODING_AGENT_TOOLS_PYTHON) { $env:CODING_AGENT_TOOLS_PYTHON } else { 'python' }
+$previousPythonPath = $env:PYTHONPATH
+try {
+    $env:PYTHONPATH = "$PSScriptRoot$([IO.Path]::PathSeparator)$previousPythonPath"
+    & $pythonCommand -m codeclaims @args
+    $toolExit = $LASTEXITCODE
+} finally {
+    $env:PYTHONPATH = $previousPythonPath
+}
+exit $toolExit

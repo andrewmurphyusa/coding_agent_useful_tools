@@ -9,3 +9,4 @@
 #    obligations. See COMMERCIAL-LICENSE.md or contact andrew_murphy_datapro@outlook.com
 #     with subject line: "Commercial Licensing Request for coding-agent-useful-tools".
 
+__version__ = "0.1.0"

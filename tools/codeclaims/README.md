@@ -2,7 +2,7 @@
 
 `codeclaims` scans a local repository without importing or executing its code and checks structured claims against the resulting facts. Python 3.11 or later and Git (for Git metadata) are required; there are no runtime packages or network calls.
 
-Install with `pipx install ./tools/codeclaims`, or run `python -m codeclaims` from this directory. The included `codeclaims.cmd` and `codeclaims.ps1` launchers also run from this directory or an environment where the package is installed.
+Install with `pipx install ./tools/codeclaims`, or run `python -m codeclaims` from this directory. The included `codeclaims.cmd` and `codeclaims.ps1` launchers run it from any working directory without installing it; relative `--repo`, `--out`, `--facts` and `--in` paths resolve against the directory where the command was run. They use `python` from `PATH` unless `CODING_AGENT_TOOLS_PYTHON` holds the full path to a `python.exe`. `codeclaims --version` prints the version.
 
 ```text
 codeclaims scan --repo /path/to/repo --out /path/to/output --exclude 'auth/**' --max-md-tokens 15000

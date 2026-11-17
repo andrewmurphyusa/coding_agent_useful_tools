@@ -17,6 +17,8 @@ Alternatively, run the checked-in Windows launchers from PowerShell:
 .\tools\agentlog\agentlog.ps1 compress --help
 ```
 
+The launchers run the tool from its own folder without installing it, and keep the caller's working directory, so relative paths resolve where the command was run. They use `python` from `PATH` unless the `CODING_AGENT_TOOLS_PYTHON` environment variable holds the full path to a `python.exe`; Python 3.14 or newer reads `.jsonl.zst` archives natively without an external `zstd`. When running without installing on Windows, install `tzdata` for that interpreter (`python -m pip install --user tzdata`).
+
 ## Command guide
 
 | Command | Purpose | Example |

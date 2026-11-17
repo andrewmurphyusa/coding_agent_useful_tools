@@ -9,12 +9,16 @@
 #    obligations. See COMMERCIAL-LICENSE.md or contact andrew_murphy_datapro@outlook.com
 #     with subject line: "Commercial Licensing Request for coding-agent-useful-tools".
 
-$previousAgentlogPath = $env:PYTHONPATH
+# Runs agentlog from this folder without installing it. The caller's working
+# directory is kept, so relative paths resolve where the command was run.
+# Set CODING_AGENT_TOOLS_PYTHON to a python.exe path to choose the interpreter.
+$pythonCommand = if ($env:CODING_AGENT_TOOLS_PYTHON) { $env:CODING_AGENT_TOOLS_PYTHON } else { 'python' }
+$previousPythonPath = $env:PYTHONPATH
 try {
-    $env:PYTHONPATH = "$PSScriptRoot$([IO.Path]::PathSeparator)$previousAgentlogPath"
-    & python -m agentlog @args
-    $agentlogExit = $LASTEXITCODE
+    $env:PYTHONPATH = "$PSScriptRoot$([IO.Path]::PathSeparator)$previousPythonPath"
+    & $pythonCommand -m agentlog @args
+    $toolExit = $LASTEXITCODE
 } finally {
-    $env:PYTHONPATH = $previousAgentlogPath
+    $env:PYTHONPATH = $previousPythonPath
 }
-exit $agentlogExit
+exit $toolExit

@@ -113,6 +113,14 @@ def unfinished():
         (metadata / 'index').write_bytes(index + hashlib.sha1(index).digest())
         return repo, commit.hex()
 
+    def test_version_flag(self):
+        from codeclaims import __version__
+        stdout=io.StringIO()
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.main(['--version'])
+        self.assertEqual(raised.exception.code,0)
+        self.assertEqual(stdout.getvalue().strip(),__version__)
+
     def test_scan_and_check(self):
         orig=Path.read_text
         def guarded(path,*a,**kw):
