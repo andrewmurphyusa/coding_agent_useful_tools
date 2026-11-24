@@ -26,7 +26,7 @@ from .core.zst import ZstdUnavailable, native_available
 from .readers.base import SessionMeta
 from .readers.discover import default_roots, discover_sessions, detect_source
 
-PLUGINS = ("census", "sessions", "skeleton", "show", "profile", "compactions", "compress", "sequences", "expand", "loops", "diff", "trend", "automations", "search")
+PLUGINS = ("census", "sessions", "skeleton", "show", "profile", "compactions", "compress", "sequences", "expand", "loops", "diff", "trend", "automations", "search", "toolcalls")
 
 def _doctor(args):
     connection=sqlite3.connect(":memory:")

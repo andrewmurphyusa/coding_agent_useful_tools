@@ -25,6 +25,7 @@ The launchers run the tool from its own folder without installing it, and keep t
 | --- | --- | --- |
 | `doctor` | Check Python, local capabilities, roots, and discovered-session counts. | `agentlog doctor` |
 | `census` | Measure record, tool, and command byte/token shares. | `agentlog census <session> --all` |
+| `toolcalls` | Count tool calls and leading shell commands (privacy-filtered) to build permission allowlists. | `agentlog toolcalls --last 50 --out .\scratch` |
 | `sessions` | List session metadata and filter likely automation runs. | `agentlog sessions --automation <id>` |
 | `skeleton` | Show the event timeline without full bodies. | `agentlog skeleton <session>` |
 | `show` | Expand an event, block, variant, loop, or finding reference. | `agentlog show E412 --session <session>` |
@@ -43,6 +44,16 @@ The launchers run the tool from its own folder without installing it, and keep t
 | `search` | Find matching messages in the local index. | `agentlog search --q "context window"` |
 
 Most commands write a Markdown view and complete JSON data beneath `agentlog-out/`; use `--out DIR` to choose another report directory. Session references accept a full ID, an unambiguous prefix of at least eight characters, or a supported log path. `--root PATH` adds a discovery root. `--json` selects a compact JSON stdout summary.
+
+## Tool-call allowlist report
+
+`toolcalls` counts calls per tool and, for shell tools (Bash, PowerShell, Codex shell/exec), the leading command key (for example `git status`, `rtk git status`). Heredoc bodies are ignored (including when the heredoc line also has `|`, `&&` or `;`), and code-looking lines (`try:`, `x = 1`) are dropped. Only the first token is reported, plus a second word for known subcommand-style tools (git, gh, npm, pnpm, yarn, bun, docker, kubectl, cargo, go, pip, uv, dotnet, az, aws, gcloud, brew, winget, terraform, poetry, conda, systemctl, apt, choco, scoop, code, claude, codex; `rtk` keeps two more words; `python -m <module>`), and only when it is a lowercase subcommand-shaped word. Anything else (`cd <dir>`, `rg <pattern>`, `python <script>`) reports just the first token. Add tools with the repeatable `--subcommand-tool NAME`. Arguments, paths and URLs are never emitted. Segments that fail the privacy filter are counted as dropped.
+
+```powershell
+agentlog toolcalls --source claude --last 50 --project Daily --min-count 3 --top 40 --out .\scratch
+```
+
+Writes `toolcalls.md` and `toolcalls.json`; honors `--max-tokens` and `--json`.
 
 ### View budgets
 
